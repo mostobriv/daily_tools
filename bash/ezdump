@@ -1,0 +1,51 @@
+#!/bin/bash
+[ "root" != "$USER" ] && exec sudo $0 "$@"
+
+rname=$(basename $0)
+
+# don't forget to `sudo chmod +s ...`
+
+print_usage() {
+        echo "Usage: $rname [OPTION]..."
+        echo "Simple dumper of process memory via /proc/... subsystem"
+        echo "Options:"
+        echo "-h        print usage"
+        echo "-a        dump all found memory regions (full dump)"
+        echo "             by default dumping only dynamically allocated regions"
+        echo "             like heap, stack, vdso etc."
+        echo "-s        include static regions like .text, .data, .bss etc."
+        echo "-p        pid of process to dump"
+}
+
+
+echo $rname
+exit 0
+
+while [ -n "$1" ]
+do
+    case "$1" in
+        -p) echo "-p"
+            shift
+            echo "$1" ;;
+        -a) echo "-a" ;;
+        -s) echo "-s" ;;
+        -h) echo "-h" ;;
+        *)  echo "[!] Invalid option - $1"
+    esac
+    shift
+done
+
+#if [ $# -eq 1 ]; then
+#   PID=$1;
+#   echo $PID;
+#   cat /proc/$PID/maps | grep -v / | while read line; do
+#       line=${line%% *};
+#       start=${line%-*};
+#       stop=${line#*-};
+#       dd if=/proc/$PID/mem \
+#           of=pid-$PID-$start-$stop.raw \
+#           bs=512 \
+#           skip=$((0x$start / 512)) \
+#           count=$(((0x$stop - 0x$start) / 512)) #>&- 2>&-;
+#   done
+#fi
