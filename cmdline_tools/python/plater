@@ -1,0 +1,118 @@
+#!/usr/bin/env python
+
+import argparse
+import sys
+import os
+
+
+template = '''#!/usr/bin/env python
+from pwn import *
+import argparse
+import sys
+import os
+
+
+# 127.0.0.1:4000 is for QIRA debuging socket
+
+ADDR = '{}' or '127.0.0.1'
+PORT = {} or 4000
+LIBC_PATH = '{}'
+BINARY_PATH = '{}'
+DEBUG = False
+
+
+def chunks(it, s):
+    return [it[i:i+s] for i in xrange(0, len(it), s)]
+
+
+def local():
+    io = process(os.path.normpath(os.path.join(os.getcwd(), BINARY_PATH)), 
+                    env={{
+                        'LD_PRELOAD': os.path.normpath(os.path.join(os.getcwd(), LIBC_PATH))
+                    }}
+                )
+
+    return io
+
+
+def debug():
+    global DEBUG
+    DEBUG = True
+    
+    return local()
+
+
+def start(arguments):        
+    parser = argparse.ArgumentParser()
+    parser.add_argument('mode', help='Mode to run sploit', type=str, nargs='?', default='local')
+    parser.add_argument('-d', '--debug', help='Run sploit locally with DEBUG=True', action='store_true')
+    parser.add_argument('-a', '--addr', help='Sometimes you may want to specify different addr without changing in script', type=str)
+    parser.add_argument('-p', '--port', help='Same about port', type=int)
+    opts = parser.parse_args(arguments)
+    
+
+    if opts.debug:
+        io = debug()
+
+    elif opts.mode == 'remote':
+        global ADDR, PORT
+        ADDR = opts.addr if opts.addr else ADDR
+        PORT = opts.port if opts.port else PORT
+
+        io = remote(ADDR, PORT)
+
+    else:
+        io = local()
+
+    return io
+
+
+
+def main(argc, argv):
+
+    io = start(argv[1:])
+
+    def debug_prompt():
+        if DEBUG:
+            log.info('PID: %d' % (util.proc.pidof(io)[0]))
+            raw_input('g?')
+
+
+if __name__ == '__main__':
+    sys.exit(main(len(sys.argv), sys.argv))
+'''
+
+class Templater(object):
+
+    def __init__(self, arguments):
+        parser = argparse.ArgumentParser(
+                prog='templater',
+                description='Pretty simple binary-pwn-sploits generator',
+                usage='''templater <command> [<args>]'''
+            )
+        parser.add_argument('binary', help='Target binary', metavar='binary', type=str)
+        parser.add_argument('-a', '--addr', help='Remote host addr', type=str, default='')
+        parser.add_argument('-p', '--port', help='Remote port', type=int)
+        parser.add_argument('-l', '--libc', help='Libc path', type=str, default='')
+        parser.add_argument('-f', '--file', type=argparse.FileType('w'), default=sys.stdout, help='Path where template sploit will be placed')
+
+        args = parser.parse_args(arguments)
+        #self._prepare_args(args)
+
+        sploit = template.format(args.addr, args.port, args.libc, args.binary)
+
+        args.file.write(sploit)
+        
+
+    def _prepare_args(self, args):
+        args.libc = os.path.normpath(os.path.join(os.getcwd(), args.libc)) if args.libc else ''
+        args.binary = os.path.normpath(os.path.join(os.getcwd(), args.binary))
+
+
+
+def main(argc, argv):
+    Templater(argv[1:])
+    
+
+if __name__ == '__main__':
+    sys.exit(main(len(sys.argv), sys.argv))
