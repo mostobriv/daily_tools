@@ -77,6 +77,8 @@ def main(argc, argv):
             log.info('PID: %d' % (util.proc.pidof(io)[0]))
             raw_input('g?')
 
+    io.interactive()
+    io.close()
 
 if __name__ == '__main__':
     sys.exit(main(len(sys.argv), sys.argv))
