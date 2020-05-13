@@ -209,7 +209,7 @@ class my_idb_hook_t(idaapi.IDB_Hooks):
 
                         RnSyncState.clear()
 
-                    elif RnSyncState.STATE == RNST_STMEMB:
+                    elif RnSyncState.STATE == RnSyncState.RNST_STMEMB:
                         pass
 
                     else:
