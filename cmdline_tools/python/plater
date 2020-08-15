@@ -1,16 +1,19 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 import argparse
 import sys
 import os
 
 
-template = '''#!/usr/bin/env python
+template = '''#!/usr/bin/env python2
 from pwn import *
 import argparse
+from enum import Enum
 import sys
 import os
 
+# Few notes:
+# p = process(...); p.libc isntead of ELF(LIBC_PATH)
 
 # 127.0.0.1:4000 is for QIRA debuging socket
 
@@ -20,17 +23,26 @@ LIBC_PATH = '{}'
 BINARY_PATH = '{}'
 DEBUG = False
 
+RStat = None
+
+class RunStatus(Enum):
+    local = 1
+    remote = 2
+
 
 def chunks(it, s):
     return [it[i:i+s] for i in xrange(0, len(it), s)]
 
 
 def local():
-    io = process(os.path.normpath(os.path.join(os.getcwd(), BINARY_PATH)), 
-                    env={{
-                        'LD_PRELOAD': os.path.normpath(os.path.join(os.getcwd(), LIBC_PATH))
-                    }}
-                )
+    global RStat
+    RStat = RunStatus.local
+
+    p_env = {{}}
+    if len(LIBC_PATH) != 0:
+        p_env['LD_PRELOAD'] = os.path.normpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), LIBC_PATH))
+
+    io = process(os.path.normpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), BINARY_PATH)), env=p_env)
 
     return io
 
@@ -55,9 +67,10 @@ def start(arguments):
         io = debug()
 
     elif opts.mode == 'remote':
-        global ADDR, PORT
+        global ADDR, PORT, RStat
         ADDR = opts.addr if opts.addr else ADDR
         PORT = opts.port if opts.port else PORT
+        RStat = RunStatus.remote
 
         io = remote(ADDR, PORT)
 
@@ -67,14 +80,19 @@ def start(arguments):
     return io
 
 
+def get_base_address(pid):
+      return int(open("/proc/{{}}/maps".format(pid), 'rb').readlines()[0].split('-')[0], 16)
+
 
 def main(argc, argv):
 
     io = start(argv[1:])
 
     def debug_prompt():
+        global RStat
         if DEBUG:
-            log.info('PID: %d' % (util.proc.pidof(io)[0]))
+            if RStat == RunStatus.local:
+                log.info('PID: %d' % (util.proc.pidof(io)[0]))
             raw_input('g?')
 
     io.interactive()
@@ -101,8 +119,12 @@ class Templater(object):
         args = parser.parse_args(arguments)
         #self._prepare_args(args)
 
-        sploit = template.format(args.addr, args.port, args.libc, args.binary)
-
+        sploit = template.format(
+            args.addr,
+            args.port,
+            args.libc,
+            args.binary
+        )
         args.file.write(sploit)
         
 
