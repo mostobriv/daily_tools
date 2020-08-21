@@ -1,8 +1,8 @@
-
+import idaapi
 import ida_bytes
 
-import util
-
+# from ida_strugle import util
+idaapi.require('ida_strugle.util')
 
 class Stream:
 

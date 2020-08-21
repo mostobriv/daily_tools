@@ -1,6 +1,8 @@
 import idaapi
 
-import util
+# from ida_strugle import util
+
+idaapi.require('ida_strugle.util')
 
 
 PTR_SIZE        = util.get_ptr_size()
@@ -57,3 +59,5 @@ def init():
     assert PDWORD_TINFO.get_pointed_object() == DWORD_TINFO
     assert PQWORD_TINFO.get_pointed_object() == QWORD_TINFO
     assert PXWORD_TINFO.get_pointed_object() == XWORD_TINFO
+
+init()

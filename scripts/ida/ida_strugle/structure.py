@@ -4,8 +4,8 @@ import idaapi
 import idc
 
 
-from . import const
-from . import util
+from ida_strugle import const
+from ida_strugle import util
 
 import re
 
@@ -147,6 +147,8 @@ class Member(AbstractMember):
         self.tinfo = tinfo
         self.name = name if name else "field_{0:X}".format(self.offset)
 
+    # TODO: Member.as_ptr to make pointer from tinfo, but mb it's useless
+
 
 class Gap(AbstractMember):
     def __init__(self, size, offset, name=None):
@@ -183,7 +185,7 @@ class FunctionPointer(AbstractMember):
 
     @property
     def name(self):
-        name = idaapi.get_ea_name(self.addr)
+        name = idaapi.get_name(self.addr)
         demangled_name = idc.demangle_name(name, idc.get_inf_attr(idc.INF_SHORT_DN))
         if demangled_name:
             name = demangled_name_to_c_str(demangled_name)
@@ -273,9 +275,22 @@ class Structure(AbstractMember):
             udt.push_back(new_member)
 
         final_tinfo = idaapi.tinfo_t()
-        final_tinfo.create_udt(udt, idaapi.BTF_STRUCT)
+        if final_tinfo.create_udt(udt, idaapi.BTF_STRUCT):
+            return final_tinfo
 
-        return final_tinfo
+def parse_vtable_name(address):
+    name = idaapi.get_name(address)
+    if idaapi.is_valid_typename(name):
+        if name[0:3] == 'off':
+            # off_XXXXXXXX case
+            return "Vtable" + name[3:], False
+        elif "table" in name:
+            return name, True
+        print("[Warning] Weird virtual table name -", name)
+        return "Vtable_" + name, False
+    name = idc.demangle_name(idaapi.get_name(address), idc.get_inf_attr(idc.INF_SHORT_DN))
+    assert name, "Virtual table must have either legal c-type name or mangled name"
+    return demangled_name_to_c_str(name).replace("const_", "").replace("::_vftable", "_vtbl"), True
 
 
 class VirtualTable:
@@ -284,8 +299,9 @@ class VirtualTable:
 
     def __init__(self, addr, offset=0, name=None):
         self.addr = addr
-        self.name = name if name else 'Vtable_%X' % addr
-        self.struct = Structure(offset, self.name)
+        self.name = 'vtab_%X' % offset
+        self.vtable_name, _ = parse_vtable_name(addr)
+        self.struct = Structure(offset, self.vtable_name)
         self.populate()
 
     def populate(self):
@@ -298,12 +314,24 @@ class VirtualTable:
             self.struct.add_member(FunctionPointer(util.get_ptr(cur_addr), cur_addr - self.addr))
             cur_addr+= const.PTR_SIZE
 
-            if len(idaapi.get_ea_name(cur_addr)) != 0:
+            if len(idaapi.get_name(cur_addr)) != 0:
                 break
 
 
     def finalize(self):
         return self.struct.import_struct()
+
+    def get_udt_member(self, offset=0):
+        udt_member = idaapi.udt_member_t()
+        tid = self.import_to_structures()
+        if tid != idaapi.BADADDR:
+            udt_member.name = self.name
+            tmp_tinfo = idaapi.create_typedef(vtable_name)
+            tmp_tinfo.create_ptr(tmp_tinfo)
+            udt_member.type = tmp_tinfo
+            udt_member.offset = self.offset - offset
+            udt_member.size = const.EA_SIZE
+        return udt_member
 
     @property
     def n_elems(self):
@@ -320,7 +348,7 @@ class VirtualTable:
         MIN_FUNCTIONS_REQUIRED = 3
 
         # 1
-        if len(idaapi.get_ea_name(addr)) == 0:
+        if len(idaapi.get_name(addr)) == 0:
             return False
 
         # 2
@@ -331,7 +359,7 @@ class VirtualTable:
 
             functions_counted+= 1
 
-            if len(idaapi.get_ea_name(addr + functions_counted * const.PTR_SIZE)) != 0:
+            if len(idaapi.get_name(addr + functions_counted * const.PTR_SIZE)) != 0:
                 break
 
         if functions_counted < MIN_FUNCTIONS_REQUIRED:

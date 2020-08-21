@@ -2,8 +2,6 @@ import idaapi
 import idc
 
 
-
-
 def is_code_ea(ea):
     if idaapi.cvar.inf.procname == "ARM":
         flags = idc.get_full_flags(ea & -2)  # flags_t
@@ -49,10 +47,10 @@ def get_ptr(ea):
 
 
 def enum_all_segments():
-    segm = ida_segment.get_first_seg()
+    segm = idaapi.get_first_seg()
     segments = list()
     while segm is not None:
         segments.append(segm)
-        segm = ida_segment.get_next_seg(segm.start_ea)
+        segm = idaapi.get_next_seg(segm.start_ea)
 
     return segments
