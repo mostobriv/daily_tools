@@ -1,6 +1,6 @@
 //idk why there is no fucking presetted EFLAGS struct in ida
 
-enum EFLAGS {
+enum _EFLAGS {
     CF       = 0x1,     // Carry flag
     RSRVD1   = 0x2,     // Reserved, always 1 in EFLAGS
     PF       = 0x4,     // Parity flag
