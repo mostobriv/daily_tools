@@ -22,4 +22,4 @@ enum EFLAGS {
     VIF      = 0x80000, // Virtual interrupt flag (Pentium+)
     VIP      = 0x100000,// Virtual interrupt pending (Pentium+)
     ID       = 0x200000,// Able to use CPUID instruction (Pentium+)
-}
+};
