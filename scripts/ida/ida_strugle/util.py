@@ -18,6 +18,8 @@ def is_func_start(ea):
 
     return (flags & idc.MS_CODE) & idc.FF_FUNC
     
+def is_valid_ea(ea):
+    return idc.get_full_flags(ea) != 0
 
 def get_bitness():
     info = idaapi.get_inf_structure()

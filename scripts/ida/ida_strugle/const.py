@@ -2,7 +2,9 @@ import idaapi
 
 # from ida_strugle import util
 
-idaapi.require('ida_strugle.util')
+idaapi.require('ida_strugle')
+from ida_strugle import util
+
 
 
 PTR_SIZE        = util.get_ptr_size()

@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 
 import idaapi
+import idautils
 import idc
-
 
 from ida_strugle import const
 from ida_strugle import util
 
-import re
 
+import re
+from collections import defaultdict
 
 
 BAD_C_NAME_PATTERN = re.compile('[^a-zA-Z_0-9:]')
@@ -126,163 +127,10 @@ def demangled_name_to_c_str(name):
     name = "_".join(filter(len, BAD_C_NAME_PATTERN.split(name)))
     return name
 
-class AbstractMember:
-    def __init__(self, offset):
-        self.offset = offset
-        self.is_array = False
-
-    @property
-    def type_name(self):
-        return self.tinfo.dstr()
-
-    @property
-    def size(self):
-        size = self.tinfo.get_size()
-        return size if size != idaapi.BADSIZE else 1
-
-
-class Member(AbstractMember):
-    def __init__(self, tinfo, offset, name=None):
-        AbstractMember.__init__(self, offset)
-        self.tinfo = tinfo
-        self.name = name if name else "field_{0:X}".format(self.offset)
-
-    # TODO: Member.as_ptr to make pointer from tinfo, but mb it's useless
-
-
-class Gap(AbstractMember):
-    def __init__(self, size, offset, name=None):
-        AbstractMember.__init__(self, offset)
-        self.name = name if name else "gap_{0:X}".format(self.offset)
-
-        if size == 1:
-            self.tinfo = const.BYTE_TINFO
-        else:
-            array_data = idaapi.array_type_data_t()
-            array_data.base = 0
-            array_data.elem_type = const.BYTE_TINFO
-            array_data.nelems = size
-            self.tinfo = idaapi.tinfo_t()
-            self.tinfo.create_array(array_data)
-
-
-class FunctionPointer(AbstractMember):
-    def __init__(self, addr, offset):
-        AbstractMember.__init__(self, offset)
-        self.addr = addr
-
-    @property
-    def tinfo(self):
-        func_ptr_tinfo = idaapi.tinfo_t()
-        decompiled_func =  idaapi.decompile(self.addr) 
-
-        if not decompiled_func or not decompiled_func.type:
-            func_ptr_tinfo.create_ptr(const.DUMMY_FUNC)
-        else:
-            func_ptr_tinfo.create_ptr(decompiled_func.type)
-
-        return func_ptr_tinfo
-
-    @property
-    def name(self):
-        name = idaapi.get_name(self.addr)
-        demangled_name = idc.demangle_name(name, idc.get_inf_attr(idc.INF_SHORT_DN))
-        if demangled_name:
-            name = demangled_name_to_c_str(demangled_name)
-
-
-        if len(name) == 0:
-            name = 'func_%X' % (self.addr)
-
-        return name
-    
-    @staticmethod
-    def check(addr):
-        # 1 - check if it's even code
-        # 2 - check that addr is pointing to the start of function or imported
-
-        # 1
-        if not util.is_code_ea(addr):
-            return False
-
-        # 2
-        if not util.is_func_start(addr):
-            return False
-
-        return True
-
-
-class Structure(AbstractMember):
-    def __init__(self, offset=0, name=None):
-        AbstractMember.__init__(self, offset)
-        self.offset = offset
-        self.name = name
-        self.members = list()
-
-    def add_member(self, member):
-        if not isinstance(member, AbstractMember):
-            raise TypeError('Trying to add member with wrong type: %s' % (member.__class__.__name__))
-
-        self.members.append(member)
-
-    def has_name_collisions(self):
-        return len(set([m.name for m in self.members])) != len(self.members)
-
-    def resolve_name_collisions(self):
-        # cuz im fucking dumb and can doit only with O(n^2)
-        for i in range(len(self.members)-1):
-            suffix = 0
-            for j in range(i+1, len(self.members)):
-                # WARNING: possible bug
-                # TODO: somehow bypass overloading of name getter, mb i should separate name and pretty_name
-                if self.members[i].name == self.members[j].name:
-                    self.members[j].name = '%s_%d' % (self.members[i].name, suffix)
-                    suffix+= 1
-
-    def import_struct(self):
-        if self.has_name_collisions():
-            self.resolve_name_collisions()
-
-        cdecl_typedef = '#pragma pack(push, 1)\n' + idaapi.print_tinfo(None, 4, 5, idaapi.PRTYPE_MULTI | idaapi.PRTYPE_TYPE | idaapi.PRTYPE_SEMI,
-                                                self.tinfo, self.name, None)
-
-        previous_ordinal = idaapi.get_type_ordinal(idaapi.cvar.idati, self.name)
-       
-        if previous_ordinal:
-            idaapi.del_numbered_type(idaapi.cvar.idati, previous_ordinal)
-            ordinal = idaapi.idc_set_local_type(previous_ordinal, cdecl_typedef, idaapi.PT_TYP)
-        else:
-            ordinal = idaapi.idc_set_local_type(-1, cdecl_typedef, idaapi.PT_TYP)
-
-        if ordinal:
-            self.ordinal = ordinal
-            print 'Imported struct \'%s\', ordinal %#x' % (self.name, self.ordinal)
-            return idaapi.import_type(idaapi.cvar.idati, -1, self.name)
-        else:
-            print 'Error due importing struct \'%s\', ordinal %#x' % (self.name, ordinal)
-            return idaapi.BADNODE
-
-    @property
-    def tinfo(self):
-        udt = idaapi.udt_type_data_t()
-        for m in self.members:
-            new_member = idaapi.udt_member_t()
-            new_member.name     = m.name
-            new_member.type     = m.tinfo
-            new_member.size     = m.size
-            new_member.offset   = m.offset
-
-            udt.push_back(new_member)
-
-        final_tinfo = idaapi.tinfo_t()
-        if final_tinfo.create_udt(udt, idaapi.BTF_STRUCT):
-            return final_tinfo
-
 def parse_vtable_name(address):
     name = idaapi.get_name(address)
     if idaapi.is_valid_typename(name):
         if name[0:3] == 'off':
-            # off_XXXXXXXX case
             return "Vtable" + name[3:], False
         elif "table" in name:
             return name, True
@@ -293,76 +141,142 @@ def parse_vtable_name(address):
     return demangled_name_to_c_str(name).replace("const_", "").replace("::_vftable", "_vtbl"), True
 
 
-class VirtualTable:
-    # TODO: can change type of virtual functions to __thiscall on-fly
-    # TODO: try to get names of virtual tables and demangle them as PyTools do
 
-    def __init__(self, addr, offset=0, name=None):
-        self.addr = addr
-        self.name = 'vtab_%X' % offset
-        self.vtable_name, _ = parse_vtable_name(addr)
-        self.struct = Structure(offset, self.vtable_name)
-        self.populate()
-
-    def populate(self):
-        cur_addr = self.addr
-
-        while True:
-            if not FunctionPointer.check(util.get_ptr(cur_addr)):
-                break
-
-            self.struct.add_member(FunctionPointer(util.get_ptr(cur_addr), cur_addr - self.addr))
-            cur_addr+= const.PTR_SIZE
-
-            if len(idaapi.get_name(cur_addr)) != 0:
-                break
-
-
-    def finalize(self):
-        return self.struct.import_struct()
-
-    def get_udt_member(self, offset=0):
-        udt_member = idaapi.udt_member_t()
-        tid = self.import_to_structures()
-        if tid != idaapi.BADADDR:
-            udt_member.name = self.name
-            tmp_tinfo = idaapi.create_typedef(vtable_name)
-            tmp_tinfo.create_ptr(tmp_tinfo)
-            udt_member.type = tmp_tinfo
-            udt_member.offset = self.offset - offset
-            udt_member.size = const.EA_SIZE
-        return udt_member
+class AbstractStructMember:
+    def __init__(self, offset=0, comment=''):
+        self.offset = offset
+        self.comment = comment
 
     @property
-    def n_elems(self):
-        return self.struct.size / const.PTR_SIZE
+    def size(self):
+        size = self.tinfo.get_size()
+        return size if size != idaapi.BADSIZE else 1
+
+
+
+class StructMember(AbstractStructMember):
+    def __init__(self, tinfo, field_name='', **kwargs):
+        AbstractStructMember.__init__(self, **kwargs)
+        self.tinfo = tinfo
+        self.field_name = field_name or ('field_%X' % offset)
+        self.type_name = self.tinfo.dstr() # actually useless
+
+    def __str__(self):
+        return '%#x: %s: %s' % (self.offset, self.field_name, self.tinfo.dstr())
+
+
+class Structure(AbstractStructMember):
+    def __init__(self, type_name, field_name='', is_union=False, **kwargs):
+        AbstractStructMember.__init__(self, **kwargs)
+        self.members = list()
+        self.type_name = type_name
+        self.field_name = field_name or ('field_%X' % offset)
+        self.imported = False
+        self.is_union = is_union
+
+    def __str__(self):
+        cdecl_typedef = idaapi.print_tinfo(None, 4, 5, idaapi.PRTYPE_MULTI | idaapi.PRTYPE_TYPE | idaapi.PRTYPE_SEMI,
+                                           self.tinfo, self.type_name, None)
+        return cdecl_typedef
+
+    def add(self, member):
+        self.members.append(member)
+
+    def import_to_idb(self):
+        old_sid = idaapi.get_struc_id(self.type_name)
+        if old_sid != idaapi.BADADDR:
+            idaapi.del_struc(idaapi.get_struc(old_sid))
+
+        sid = idaapi.add_struc(old_sid, self.type_name, self.is_union)
+        sptr = idaapi.get_struc(sid)
+        min_next_possible_offset = 0
+        duplicates = defaultdict(int)
+        for m in sorted(self.members, key=lambda x: x.offset):
+            assert m.offset >= min_next_possible_offset, \
+                "Got collision of fields, desired offset=%#x, min_next_possible_offset=%#x" % (m.offset, min_next_possible_offset)
+
+            field_name = m.field_name
+            if duplicates[m.field_name]:
+                field_name = 'duplicate_%s_%X' % (m.field_name, duplicates[m.field_name])
+            duplicates[m.field_name]+= 1
+
+            assert idaapi.add_struc_member(sptr, field_name, m.offset, idaapi.FF_DATA, None, 0) == 0, \
+                "An error occured due adding of new member %s to struct %s" % (repr(m.field_name), repr(self.type_name))
+
+            mptr = idaapi.get_member(sptr, m.offset)
+            assert idaapi.set_member_tinfo(sptr, mptr, 0, m.tinfo, 0) == idaapi.SMT_OK
+            if m.comment:
+                idaapi.set_member_cmt(mptr, m.comment, False)
+            
+            min_next_possible_offset = m.offset + m.size
+
+        self.imported = True
 
     @property
     def tinfo(self):
-        return self.struct.tinfo
+        if not self.imported:
+            self.import_to_idb()
+
+        tinfo = idaapi.tinfo_t()
+        tinfo.get_named_type(idaapi.cvar.idati, self.type_name)
+        return tinfo
+
+
+    @property
+    def size(self):
+        return sum([m.size for m in self.members])
+
+
+
+class FunctionPointer(AbstractStructMember):
+    def __init__(self, address, **kwargs):
+        AbstractStructMember.__init__(self, **kwargs)
+        self.address = address
+        self.type_name = 'func_%X' % (self.address) # actually useless
+
+    @property
+    def tinfo(self):
+        func_ptr_tinfo = idaapi.tinfo_t()
+        try:
+            decompiled_func =  idaapi.decompile(self.address) 
+        except:
+            decompiled_func = None
+
+        if not decompiled_func or not decompiled_func.type:
+            func_tinfo = idaapi.tinfo_t()
+            if not idaapi.get_type(self.address, func_tinfo, idaapi.GUESSED_FUNC):
+                func_ptr_tinfo.create_ptr(const.DUMMY_FUNC)
+            else:
+                func_ptr_tinfo.create_ptr(func_tinfo)
+        else:
+            func_ptr_tinfo.create_ptr(decompiled_func.type)
+
+        return func_ptr_tinfo
+
+    @property
+    def field_name(self):
+        name = idaapi.get_name(self.address)
+        demangled_name = idc.demangle_name(name, idc.get_inf_attr(idc.INF_SHORT_DN))
+        if demangled_name:
+            name = demangled_name_to_c_str(demangled_name)
+
+
+        if len(name) == 0:
+            name = 'sub_%X' % (self.address)
+
+        return name
 
     @staticmethod
-    def check(addr):
-        # 1 - name is defined here == has xref(s)
-        # 2 - at least MIN_FUNCTIONS_REQUIRED valid function pointers
-        MIN_FUNCTIONS_REQUIRED = 3
+    def check(address):
+        # 1 - check if it's even code
+        # 2 - check that address is pointing to the start of function or imported
 
         # 1
-        if len(idaapi.get_name(addr)) == 0:
+        if not util.is_code_ea(address):
             return False
 
         # 2
-        functions_counted = 0
-        while True:
-            if not FunctionPointer.check(util.get_ptr(addr + functions_counted * const.PTR_SIZE)):
-                break
-
-            functions_counted+= 1
-
-            if len(idaapi.get_name(addr + functions_counted * const.PTR_SIZE)) != 0:
-                break
-
-        if functions_counted < MIN_FUNCTIONS_REQUIRED:
+        if not util.is_func_start(address):
             return False
 
-        return functions_counted
+        return True
