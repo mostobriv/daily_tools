@@ -47,6 +47,7 @@ def create_vtable(address):
         v = VirtualTable(address)
         v.import_to_idb()
         print("Imported: %s" % v.type_name)
+        return v.type_name
     except:
         print("Got an exception!")
 
@@ -59,7 +60,7 @@ class _MakeVirtualTable(idaapi.action_handler_t):
         self.hotkey         = "Shift-V"
 
     def activate(self, ctx):
-        create_vtable(here())
+        create_vtable(idaapi.here())
 
     def update(self, ctx):
         if ctx.widget_type == idaapi.BWN_DISASM:
@@ -67,10 +68,73 @@ class _MakeVirtualTable(idaapi.action_handler_t):
         return idaapi.AST_DISABLE_FOR_WIDGET
 
 
+class _RecastFieldToVirtualTable(idaapi.action_handler_t):
+    def __init__(self) -> None:
+        super(_RecastFieldToVirtualTable, self).__init__()
+        self.name = "ida_strugle:CastFieldToVirtualTable"
+        self.description = "Recast field to vtab* type"
+        self.hotkey = "Ctrl-Alt-R"
+
+    def activate(self, ctx):
+        vdui = idaapi.get_widget_vdui(ctx.widget)
+        current_func = vdui.cfunc
+        mptr = vdui.item.get_memptr()
+        
+        asg_expr = current_func.body.find_parent_of(vdui.item.e).cexpr
+        if asg_expr.op != idaapi.cot_asg:
+            return
+
+        parent_type = self._skip_casts(vdui.item.e.x).type
+        sid = idaapi.get_struc_id(parent_type.dstr())
+        sptr = idaapi.get_struc(sid)
+        mptr = idaapi.get_member(sptr, vdui.item.e.m)
+        
+        vtable_obj = self._skip_casts(asg_expr.y)
+        if vtable_obj.op != idaapi.cot_obj:
+            return
+
+        type_name = create_vtable(vtable_obj.obj_ea)
+        if type_name is None:
+            print("[!] Name of type returned from creation routine None or empty-string")
+            return
+
+        type_tinfo = idaapi.tinfo_t()
+        type_tinfo.get_named_type(idaapi.cvar.idati, type_name)
+        vtable_tinfo = idaapi.tinfo_t()
+        vtable_tinfo.create_ptr(type_tinfo)
+    
+
+        result = idaapi.set_member_tinfo(sptr, mptr, 0, vtable_tinfo, 0)
+        if result == idaapi.SMT_OK:
+            print("[*] Recasted successful to %s*" % type_name)
+        else:
+            print(result)
+
+    def _skip_casts(self, item):
+        while item.op == idaapi.cot_cast:
+            item = item.x
+        
+        return item
+
+    def update(self, ctx):
+        if ctx.widget_type == idaapi.BWN_PSEUDOCODE:
+            return idaapi.AST_ENABLE_FOR_WIDGET
+        return idaapi.AST_DISABLE_FOR_WIDGET
+
 def __register_action(action):
     result = idaapi.register_action(
         idaapi.action_desc_t(action.name, action.description, action, action.hotkey)
     )
     print("Registered %s with status(%x)" % (action.name, result))    
 
-__register_action(_MakeVirtualTable())
+def __unregister_action(action_name):
+    result = idaapi.unregister_action(action_name)
+    print("Unregistered %s with status(%x)" % (action_name, result))
+
+
+def __refresh_action(action):
+    __unregister_action(action.name)
+    __register_action(action)
+
+__refresh_action(_MakeVirtualTable())
+__refresh_action(_RecastFieldToVirtualTable())
