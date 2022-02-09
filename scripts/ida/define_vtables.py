@@ -1,4 +1,5 @@
 import idaapi
+import idc
 
 # import ida_strugle
 
@@ -60,7 +61,7 @@ class _MakeVirtualTable(idaapi.action_handler_t):
         self.hotkey         = "Shift-V"
 
     def activate(self, ctx):
-        create_vtable(idaapi.here())
+        create_vtable(idc.here())
 
     def update(self, ctx):
         if ctx.widget_type == idaapi.BWN_DISASM:
