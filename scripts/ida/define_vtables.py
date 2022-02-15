@@ -61,10 +61,20 @@ class _MakeVirtualTable(idaapi.action_handler_t):
         self.hotkey         = "Shift-V"
 
     def activate(self, ctx):
-        create_vtable(idc.here())
+        # Called from disassembly view
+        if ctx.widget_type == idaapi.BWN_DISASM:
+            create_vtable(idc.here())
+            
+        # Called from pseudocode view
+        else:
+            vdui = idaapi.get_widget_vdui(ctx.widget)
+            expr = vdui.item.e
+            assert expr.op == idaapi.cot_obj, "Selected item isn't a cot_obj expression"
+            create_vtable(expr.obj_ea)
+            
 
     def update(self, ctx):
-        if ctx.widget_type == idaapi.BWN_DISASM:
+        if ctx.widget_type in (idaapi.BWN_DISASM, idaapi.BWN_PSEUDOCODE):
             return idaapi.AST_ENABLE_FOR_WIDGET
         return idaapi.AST_DISABLE_FOR_WIDGET
 
@@ -83,6 +93,7 @@ class _RecastFieldToVirtualTable(idaapi.action_handler_t):
         
         asg_expr = current_func.body.find_parent_of(vdui.item.e).cexpr
         if asg_expr.op != idaapi.cot_asg:
+            print("[!] Parent expression isn't cot_asg")
             return
 
         parent_type = self._skip_casts(vdui.item.e.x).type
@@ -90,8 +101,9 @@ class _RecastFieldToVirtualTable(idaapi.action_handler_t):
         sptr = idaapi.get_struc(sid)
         mptr = idaapi.get_member(sptr, vdui.item.e.m)
         
-        vtable_obj = self._skip_casts(asg_expr.y)
+        vtable_obj = self._skip_nodes(asg_expr.y, [idaapi.cot_cast, idaapi.cot_ref])
         if vtable_obj.op != idaapi.cot_obj:
+            print("[!] Rh-expression isn't cot_obj")
             return
 
         type_name = create_vtable(vtable_obj.obj_ea)
@@ -111,11 +123,13 @@ class _RecastFieldToVirtualTable(idaapi.action_handler_t):
         else:
             print(result)
 
-    def _skip_casts(self, item):
-        while item.op == idaapi.cot_cast:
+    def _skip_nodes(self, item, rejected):
+        while item.op in rejected:
             item = item.x
-        
         return item
+
+    def _skip_casts(self, item):
+        return self._skip_nodes(item, [idaapi.cot_cast])
 
     def update(self, ctx):
         if ctx.widget_type == idaapi.BWN_PSEUDOCODE:
